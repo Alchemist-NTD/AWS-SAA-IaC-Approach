@@ -8,6 +8,10 @@ variable "my_secret_key" {
   sensitive = true
 }
 
+variable "account_digit" {
+  type = string
+}
+
 variable "region" {
   type = string
 }
