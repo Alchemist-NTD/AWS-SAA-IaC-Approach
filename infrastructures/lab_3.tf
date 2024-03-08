@@ -1,88 +1,121 @@
-data "aws_iam_policy_document" "assume_role" {
-  statement {
-    effect = "Allow"
-
-    principals {
-      type        = "Service"
-      identifiers = ["s3.amazonaws.com"]
-    }
-
-    actions = ["sts:AssumeRole"]
-  }
+variable "lab_3_bucket_1" {
+  type = string
+  default = "cfst-3355-51066f98c5bef7cfd5fea5b3a-appconfigprod1-qqjxopegy0kt"
 }
 
-resource "aws_iam_role" "replication" {
-  name = "tf-iam-role-replication-12345"
-  assume_role_policy = data.aws_iam_policy_document.assume_role.json
+locals {
+  lab_3_bucket_2 = format("%s-%s-%s", join("-", slice(split("-", var.lab_3_bucket_1), 0, 3)), "appconfigprod2", split("-", var.lab_3_bucket_1)[4])
+}
+
+resource "aws_iam_policy" "s3_replication_policy" {
+  name = "S3ReplicationPolicy"
+  
+  policy = <<EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": [
+                "s3:ListBucket",
+                "s3:GetReplicationConfiguration",
+                "s3:GetObjectVersionForReplication",
+                "s3:GetObjectVersionAcl",
+                "s3:GetObjectVersionTagging",
+                "s3:GetObjectRetention",
+                "s3:GetObjectLegalHold"
+            ],
+            "Effect": "Allow",
+            "Resource": [
+                "arn:aws:s3:::${var.lab_3_bucket_1}",
+                "arn:aws:s3:::${var.lab_3_bucket_1}/*",
+                "arn:aws:s3:::${local.lab_3_bucket_2}",
+                "arn:aws:s3:::${local.lab_3_bucket_2}/*"
+            ]
+        },
+        {
+            "Action": [
+                "s3:ReplicateObject",
+                "s3:ReplicateDelete",
+                "s3:ReplicateTags",
+                "s3:ObjectOwnerOverrideToBucketOwner"
+            ],
+            "Effect": "Allow",
+            "Resource": [
+                "arn:aws:s3:::${var.lab_3_bucket_1}/*",
+                "arn:aws:s3:::${local.lab_3_bucket_2}/*"
+            ]
+        }
+    ]
+}
+EOF
+}
+
+resource "aws_iam_role" "assume_role" {
+  name = "S3ReplicationRole"
+  assume_role_policy = <<EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "s3.amazonaws.com"
+            },
+            "Action": "sts:AssumeRole"
+        }
+    ]
+}
+EOF
+}
+
+resource "aws_iam_role_policy_attachment" "attachment_1" {
+  role = aws_iam_role.assume_role.name
+  policy_arn = aws_iam_policy.s3_replication_policy.arn
 }
 
 resource "aws_s3_bucket" "replication_2" {
-  bucket = "cfst-3355-d4ca7508621ecf2275861ab32-appconfigprod2-qtnzsyekzjhs"
+  bucket = local.lab_3_bucket_2
+  force_destroy = true
+}
+
+resource "aws_s3_bucket_acl" "replication_2_acl" {
+  bucket = aws_s3_bucket.replication_2.id
   acl = "private"
-  versioning {
-    enabled = true
-  }
+  depends_on = [aws_s3_bucket_ownership_controls.s3_bucket_acl_ownership]
+}
 
-  lifecycle_rule {
-    id = "ReplicateDeleteMarkers"
-    enabled = true
-
-    noncurrent_version_expiration {
-      days = 7
-    }
+resource "aws_s3_bucket_ownership_controls" "s3_bucket_acl_ownership" {
+  bucket = aws_s3_bucket.replication_2.id
+  rule {
+    object_ownership = "ObjectWriter"
   }
 }
 
-# resource "aws_s3_bucket_policy" "replication_2" {
-#   bucket = aws_s3_bucket.replication_2.id
-
-#   policy = jsonencode({
-#     Version = "2012-10-17",
-#     Statement = [
-#       {
-#         Sid       = "ReplicationPolicyStmt",
-#         Effect    = "Allow",
-#         Principal = "*",
-#         Action    = "s3:GetReplicationConfiguration",
-#         Resource  = aws_s3_bucket.replication_2.arn
-#       }
-#     ]
-#   })
-# }
-
 resource "aws_s3_bucket_versioning" "appconfigprod1" {
-  bucket = "cfst-3355-d4ca7508621ecf2275861ab32-appconfigprod1-qtnzsyekzjhs"
+  bucket = var.lab_3_bucket_1
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "appconfigprod2" {
+  bucket = local.lab_3_bucket_2
   versioning_configuration {
     status = "Enabled"
   }
 }
 
 resource "aws_s3_bucket_replication_configuration" "replication" {
-  role   = aws_iam_role.replication.arn
-  bucket = "cfst-3355-d4ca7508621ecf2275861ab32-appconfigprod1-qtnzsyekzjhs"
+  role   = aws_iam_role.assume_role.arn
+  bucket = var.lab_3_bucket_1
 
   rule {
-    id = "foobar"
-
-    # filter {}
+    id = "replication-rule-1"
 
     status = "Enabled"
 
-    # source_selection_criteria {
-    #   replica_modifications {
-    #     status = "Enabled"
-    #   }
-    # }
-
     destination {
       bucket = aws_s3_bucket.replication_2.arn
-      # storage_class = "STANDARD"
     }
-
-    # delete_marker_replication {
-    #     status = "Enabled"
-    # }
   }
 }
-
-# arn:aws:s3:::cfst-3355-ff3fe06ad13b9e2d1eec3e42e-appconfigprod1-l7is5ahnt5pt
